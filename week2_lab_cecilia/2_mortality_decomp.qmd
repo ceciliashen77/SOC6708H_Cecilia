@@ -1,0 +1,172 @@
+---
+title: "Week 2: Mortality I lab"
+subtitle: "SOC6708 ADA"
+author: "Liangqi (Cecilia) Shen"
+format: pdf
+execute: 
+  warning: false
+  message: false
+---
+
+# Read in data
+
+```{r}
+library(tidyverse)
+library(here)
+library(readxl)
+library(janitor)
+```
+
+For this example we are using mortality in Canada by cause, 2012-2016. Available from [StatCan](https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=1310039201). 
+
+```{r}
+d <- read_csv(here("/Users/liangqishen/Desktop/CAN_age_cod.csv"))
+head(d)
+```
+
+
+# Create a life table
+
+Let's create a life table using the mortality rates from all causes of death in 2016. Get the data we need:
+
+```{r}
+dl <- d %>% 
+  filter(year==2016, cause=="Total, all causes of death  [A00-Y89]") %>% 
+  mutate(age = start_age, Mx = rate/100000) %>% 
+  select(year, age, Mx)
+
+head(dl)
+```
+
+We need to create columns:
+
+- $n$
+- $_na_x$
+- $_nq_x$
+- $_nd_x$
+- $_nL_x$
+- $T_x$
+- $e_x$
+
+```{r}
+d_lt <- dl |> 
+     mutate(n = case_when(
+       age==0 ~ 1,
+       age==1 ~ 4,
+       TRUE ~ 5
+     ),
+       ax = case_when(
+       age==0 ~ 0.07 + 1.7*Mx,
+       age==1 ~ 1.5,
+       age==90 ~ 1/Mx,
+       TRUE ~ 2.5
+     ),
+      qx = n * Mx / (1 + (n - ax)* Mx), # probability of death
+      px = 1 - qx, # probability of survive
+      lx = lag(cumprod(px), default = 1), 
+      dx = lx - lead(lx, default = 0), #ndx = lx-Lx+n
+      Lx = n * lead(lx, default = 0) + (ax* dx),
+      Tx = rev(cumsum(rev(Lx))),
+      ex = Tx / lx
+      ) 
+```
+
+What's the life expectancy at age 10 in 2016?
+```{r}
+dl_age10 <- d_lt %>% 
+  filter(age==10) %>% 
+  select(year, age, ex)
+
+head(dl_age10)
+```
+
+
+## Exercise
+
+Calculate the lifespan disparity for Canada in 2016.
+```{r}
+d_lt |>
+  mutate (prob = dx*ex) |>
+  summarise(lifespan_disparity=sum(prob))
+
+```
+```{r}
+d_lt |>
+  group_by(year) |>
+  mutate (prob = dx*ex) |>
+  summarise(lifespan_disparity=sum(prob))
+
+```
+# Calculate cause-deleted life expectancy
+
+Now calculate life expectancy if all intentional injuries were deleted. Get the data we need:
+
+```{r}
+dls <- d %>% 
+  filter(year==2016, cause=="Total, all causes of death  [A00-Y89]"|cause=="Intentional self-harm (suicide)  [X60-X84, Y87.0]") %>% 
+  mutate(age = start_age, Mx = rate/100000) %>% 
+  select(age, cause, Mx) %>% 
+  mutate(cause = ifelse(cause=="Intentional self-harm (suicide)  [X60-X84, Y87.0]", "suicide", "total")) %>% 
+  spread(cause, Mx) %>% 
+  rename(Mx_i = suicide,
+         Mx = total)
+
+head(dls)
+```
+
+## Exercise: Cause-deleted life expectancy
+
+You need to create the same columns as above, but with the cause-deleted versions ($-i$). Do this by first creating the ratio $R_x^{-i} = \frac{M_x^{-i}}{M_x}$, use this to get $_nq_x^{-i}$, and the rest is the same. 
+
+What's the cause-deleted life expectancy at age 10? What's the implied life lost due to suicide?
+
+```{r}
+dls <- dls |>
+  mutate (Rx_minusi = (Mx-Mx_i)/Mx)
+```
+
+```{r}
+lt_cd <-dls |> 
+     mutate(n = case_when(
+       age==0 ~ 1,
+       age==1 ~ 4,
+       TRUE ~ 5
+     ),
+       ax = case_when(
+       age==0 ~ 0.07 + 1.7*Mx,
+       age==1 ~ 1.5,
+       age==90 ~ 1/Mx,
+       TRUE ~ 2.5
+     ),
+      qx = n * Mx / (1 + (n - ax)* Mx), # probability of death
+     qx_minusi = qx*Rx_minusi,
+      px = 1 - qx, # probability of survive
+      lx = lag(cumprod(px), default = 1), 
+      dx = lx - lead(lx, default = 0), #ndx = lx-Lx+n
+      Lx = n * lead(lx, default = 0) + (ax* dx),
+      Tx = rev(cumsum(rev(Lx))),
+      ex = Tx / lx,
+     #Cause deleted COLUMUNS
+     px_minusi = 1 - qx_minusi, # probability of survive
+      lx_minusi = lag(cumprod(px_minusi), default = 1), 
+      dx_minusi = lx_minusi - lead(lx_minusi, default = 0), #ndx = lx-Lx+n
+      Lx_minusi = n * lead(lx_minusi, default = 0) + (ax* dx_minusi),
+      Tx_minusi = rev(cumsum(rev(Lx_minusi))),
+      ex_minusi = Tx_minusi / lx_minusi
+      ) 
+
+print(lt_cd) 
+```
+```{r}
+lt_cd_age10 <- lt_cd %>% 
+  filter(age==10) %>% 
+  select(age, ex_minusi)
+
+head(lt_cd_age10)
+```
+
+
+#DO NOT DO!!!!
+
+# Decomposition next week
+
